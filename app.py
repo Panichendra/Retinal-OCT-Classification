@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 import shutil
 import os
 
-from Backend.inference import predict
+from inference import predict
 
 app = FastAPI()
 

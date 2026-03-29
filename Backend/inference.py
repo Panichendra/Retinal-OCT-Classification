@@ -13,21 +13,21 @@ from torchvision import transforms, models
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # =========================
-# DOWNLOAD FROM HUGGINGFACE
+# HUGGINGFACE LINKS (FIXED)
 # =========================
 
 MODEL_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_effcbam_model.pth"
 RF_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_rf_model.pkl"
 CLASSES_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_classes.json"
 
+# =========================
+# DOWNLOAD FUNCTION
+# =========================
+
 def download_file(url, filename):
     if not os.path.exists(filename):
         print(f"Downloading {filename}...")
         urllib.request.urlretrieve(url, filename)
-
-download_file(MODEL_URL, "MyProject_effcbam_model.pth")
-download_file(RF_URL, "MyProject_rf_model.pkl")
-download_file(CLASSES_URL, "MyProject_classes.json")
 
 
 # =========================
@@ -51,6 +51,7 @@ class ChannelAttention(nn.Module):
     def forward(self, x):
         return self.sigmoid(self.fc(self.avg_pool(x)) + self.fc(self.max_pool(x)))
 
+
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
         super().__init__()
@@ -62,6 +63,7 @@ class SpatialAttention(nn.Module):
         max,_ = torch.max(x, dim=1, keepdim=True)
         x = torch.cat([avg, max], dim=1)
         return self.sigmoid(self.conv(x))
+
 
 class CBAM(nn.Module):
     def __init__(self, channels):
@@ -95,23 +97,40 @@ class EfficientNet_CBAM(nn.Module):
 
 
 # =========================
-# LOAD MODELS
+# LAZY LOADING (IMPORTANT)
 # =========================
 
-model = EfficientNet_CBAM(4).to(device)
-model.load_state_dict(torch.load("MyProject_effcbam_model.pth", map_location=device))
-model.eval()
+model = None
+rf = None
+class_names = None
+original_fc = None
 
-original_fc = model.fc
+def load_models():
+    global model, rf, class_names, original_fc
 
-rf = joblib.load("MyProject_rf_model.pkl")
+    if model is None:
+        print("Loading models...")
 
-with open("MyProject_classes.json") as f:
-    class_names = json.load(f)
+        download_file(MODEL_URL, "MyProject_effcbam_model.pth")
+        download_file(RF_URL, "MyProject_rf_model.pkl")
+        download_file(CLASSES_URL, "MyProject_classes.json")
+
+        model = EfficientNet_CBAM(4).to(device)
+        model.load_state_dict(torch.load("MyProject_effcbam_model.pth", map_location=device))
+        model.eval()
+
+        original_fc = model.fc
+
+        rf = joblib.load("MyProject_rf_model.pkl")
+
+        with open("MyProject_classes.json") as f:
+            class_names = json.load(f)
+
+        print("Models loaded successfully")
 
 
 # =========================
-# TRANSFORMS
+# TRANSFORM
 # =========================
 
 transform = transforms.Compose([
@@ -137,9 +156,11 @@ def save_activation(module, input, output):
     global activations
     activations = output
 
-target_layer = model.features[-1]
-target_layer.register_forward_hook(save_activation)
-target_layer.register_backward_hook(save_gradient)
+
+def register_hooks():
+    target_layer = model.features[-1]
+    target_layer.register_forward_hook(save_activation)
+    target_layer.register_backward_hook(save_gradient)
 
 
 def generate_gradcam(img_tensor, class_idx):
@@ -169,12 +190,15 @@ def generate_gradcam(img_tensor, class_idx):
 
 def predict(image_path):
 
+    load_models()
+    register_hooks()
+
     img = Image.open(image_path).convert("RGB")
     original = np.array(img)
 
     img_tensor = transform(img).unsqueeze(0).to(device)
 
-    # Feature extraction
+    # FEATURE EXTRACTION
     model.fc = nn.Identity()
     with torch.no_grad():
         features = model(img_tensor).cpu().numpy()
@@ -185,14 +209,14 @@ def predict(image_path):
     prediction = class_names[pred_idx]
     confidence = float(probs[pred_idx])
 
-    # Top-2
+    # TOP-2
     top2_idx = probs.argsort()[-2:][::-1]
     top2 = [
         {"class": class_names[i], "confidence": float(probs[i])}
         for i in top2_idx
     ]
 
-    # GradCAM
+    # GRADCAM
     model.fc = original_fc
     output = model(img_tensor)
     class_idx = torch.argmax(output, dim=1).item()

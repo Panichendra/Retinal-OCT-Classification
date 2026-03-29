@@ -17,8 +17,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # =========================
 
 MODEL_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_effcbam_model.pth"
-RF_URL = "PASTE_RF_LINK_HERE"
-CLASSES_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_rf_model.pkl"
+RF_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_rf_model.pkl"
+CLASSES_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_classes.json"
 
 def download_file(url, filename):
     if not os.path.exists(filename):

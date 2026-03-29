@@ -7,3 +7,4 @@ scikit-learn
 joblib
 opencv-python-headless
 pillow
+python-multipart

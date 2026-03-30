@@ -22,39 +22,84 @@ class_names = None
 original_fc = None
 loaded = False
 
-def download_file(url, filename):
-    if not os.path.exists(filename):
-        urllib.request.urlretrieve(url, filename)
 
-# =========================
-# MODEL
-# =========================
+# ===================== CBAM MODULE =====================
+class ChannelAttention(nn.Module):
+    def __init__(self, in_channels, reduction=16):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, in_channels // reduction),
+            nn.ReLU(),
+            nn.Linear(in_channels // reduction, in_channels)
+        )
+        self.sigmoid = nn.Sigmoid()
 
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        avg_pool = torch.mean(x, dim=(2,3)).view(b, c)
+        out = self.fc(avg_pool)
+        out = self.sigmoid(out).view(b, c, 1, 1)
+        return x * out
+
+
+class SpatialAttention(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(2, 1, kernel_size=7, padding=3)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg = torch.mean(x, dim=1, keepdim=True)
+        max, _ = torch.max(x, dim=1, keepdim=True)
+        x_cat = torch.cat([avg, max], dim=1)
+        out = self.conv(x_cat)
+        return x * self.sigmoid(out)
+
+
+class CBAM(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.ca = ChannelAttention(channels)
+        self.sa = SpatialAttention()
+
+    def forward(self, x):
+        x = self.ca(x)
+        x = self.sa(x)
+        return x
+
+
+# ===================== MODEL =====================
 class EfficientNet_CBAM(nn.Module):
     def __init__(self, num_classes=4):
         super().__init__()
         base = models.efficientnet_b0(weights=None)
+
         self.features = base.features
+        self.cbam = CBAM(1280)   # IMPORTANT
+
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(1280, num_classes)
 
     def forward(self, x):
         x = self.features(x)
+        x = self.cbam(x)   # IMPORTANT
         x = self.pool(x)
-        x = torch.flatten(x,1)
+        x = torch.flatten(x, 1)
         return self.fc(x)
 
-# =========================
-# SAFE LOAD (ONLY ONCE)
-# =========================
 
+# ===================== DOWNLOAD =====================
+def download_file(url, filename):
+    if not os.path.exists(filename):
+        urllib.request.urlretrieve(url, filename)
+
+
+# ===================== LOAD =====================
 def load_models():
     global model, rf, class_names, original_fc, loaded
 
     if loaded:
         return
-
-    print("Loading models...")
 
     download_file(MODEL_URL, "model.pth")
     download_file(RF_URL, "rf.pkl")
@@ -72,12 +117,9 @@ def load_models():
         class_names = json.load(f)
 
     loaded = True
-    print("Models loaded!")
 
-# =========================
-# TRANSFORM
-# =========================
 
+# ===================== TRANSFORM =====================
 transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.Grayscale(3),
@@ -85,10 +127,8 @@ transform = transforms.Compose([
     transforms.Normalize([0.485]*3,[0.229]*3)
 ])
 
-# =========================
-# PREDICT
-# =========================
 
+# ===================== PREDICT =====================
 def predict_only(image_path):
 
     load_models()
@@ -102,7 +142,6 @@ def predict_only(image_path):
         features = model(img_tensor).cpu().numpy()
 
     probs = rf.predict_proba(features)[0]
-
     pred_idx = np.argmax(probs)
 
     return (
@@ -113,10 +152,8 @@ def predict_only(image_path):
         img
     )
 
-# =========================
-# GRADCAM
-# =========================
 
+# ===================== GRADCAM =====================
 def generate_gradcam(pred_idx, img_tensor, img):
 
     model.fc = original_fc

@@ -10,7 +10,9 @@ import urllib.request
 from PIL import Image
 from torchvision import transforms, models
 
+# ===================== SETTINGS =====================
 device = torch.device("cpu")
+torch.set_num_threads(1)
 
 MODEL_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_effcbam_model.pth"
 RF_URL = "https://huggingface.co/PaniChendra/retinal-oct-model/resolve/main/Backend/MyProject_rf_model.pkl"
@@ -23,23 +25,24 @@ original_fc = None
 loaded = False
 
 
-# ===================== CBAM MODULE =====================
+# ===================== CBAM =====================
 class ChannelAttention(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+
         self.fc = nn.Sequential(
-            nn.Linear(in_channels, in_channels // reduction),
+            nn.Conv2d(in_channels, in_channels // reduction, 1, bias=True),
             nn.ReLU(),
-            nn.Linear(in_channels // reduction, in_channels)
+            nn.Conv2d(in_channels // reduction, in_channels, 1, bias=True)
         )
+
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        b, c, _, _ = x.size()
-        avg_pool = torch.mean(x, dim=(2,3)).view(b, c)
-        out = self.fc(avg_pool)
-        out = self.sigmoid(out).view(b, c, 1, 1)
-        return x * out
+        out = self.avg_pool(x)
+        out = self.fc(out)
+        return x * self.sigmoid(out)
 
 
 class SpatialAttention(nn.Module):
@@ -52,8 +55,7 @@ class SpatialAttention(nn.Module):
         avg = torch.mean(x, dim=1, keepdim=True)
         max, _ = torch.max(x, dim=1, keepdim=True)
         x_cat = torch.cat([avg, max], dim=1)
-        out = self.conv(x_cat)
-        return x * self.sigmoid(out)
+        return x * self.sigmoid(self.conv(x_cat))
 
 
 class CBAM(nn.Module):
@@ -75,14 +77,14 @@ class EfficientNet_CBAM(nn.Module):
         base = models.efficientnet_b0(weights=None)
 
         self.features = base.features
-        self.cbam = CBAM(1280)   # IMPORTANT
+        self.cbam = CBAM(1280)
 
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Linear(1280, num_classes)
 
     def forward(self, x):
         x = self.features(x)
-        x = self.cbam(x)   # IMPORTANT
+        x = self.cbam(x)
         x = self.pool(x)
         x = torch.flatten(x, 1)
         return self.fc(x)
@@ -91,6 +93,7 @@ class EfficientNet_CBAM(nn.Module):
 # ===================== DOWNLOAD =====================
 def download_file(url, filename):
     if not os.path.exists(filename):
+        print(f"Downloading {filename}...")
         urllib.request.urlretrieve(url, filename)
 
 
@@ -100,6 +103,8 @@ def load_models():
 
     if loaded:
         return
+
+    print("Loading models...")
 
     download_file(MODEL_URL, "model.pth")
     download_file(RF_URL, "rf.pkl")
@@ -117,14 +122,15 @@ def load_models():
         class_names = json.load(f)
 
     loaded = True
+    print("Models loaded successfully")
 
 
 # ===================== TRANSFORM =====================
 transform = transforms.Compose([
-    transforms.Resize((224,224)),
+    transforms.Resize((224, 224)),
     transforms.Grayscale(3),
     transforms.ToTensor(),
-    transforms.Normalize([0.485]*3,[0.229]*3)
+    transforms.Normalize([0.485]*3, [0.229]*3)
 ])
 
 
@@ -139,7 +145,7 @@ def predict_only(image_path):
     model.fc = nn.Identity()
 
     with torch.no_grad():
-        features = model(img_tensor).cpu().numpy()
+        features = model(img_tensor).detach().cpu().numpy()
 
     probs = rf.predict_proba(features)[0]
     pred_idx = np.argmax(probs)
@@ -159,24 +165,25 @@ def generate_gradcam(pred_idx, img_tensor, img):
     model.fc = original_fc
 
     img_tensor.requires_grad = True
-    output = model(img_tensor)
 
+    output = model(img_tensor)
     loss = output[:, pred_idx]
+
     loss.backward()
 
     gradients = img_tensor.grad
     heatmap = gradients.mean(dim=1).squeeze().cpu().numpy()
 
-    heatmap = np.maximum(heatmap,0)
+    heatmap = np.maximum(heatmap, 0)
     heatmap /= np.max(heatmap) + 1e-8
 
     original = np.array(img)
 
-    heatmap = cv2.resize(heatmap,(original.shape[1],original.shape[0]))
-    heatmap = np.uint8(255*heatmap)
+    heatmap = cv2.resize(heatmap, (original.shape[1], original.shape[0]))
+    heatmap = np.uint8(255 * heatmap)
     heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
 
-    overlay = cv2.addWeighted(original,0.6,heatmap,0.4,0)
+    overlay = cv2.addWeighted(original, 0.6, heatmap, 0.4, 0)
 
     path = "gradcam.jpg"
     cv2.imwrite(path, overlay)

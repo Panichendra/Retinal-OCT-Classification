@@ -90,13 +90,17 @@ class EfficientNet_CBAM(nn.Module):
         return self.fc(x)
 
 # =========================
-# GLOBALS (LAZY LOAD)
+# GLOBALS
 # =========================
 
 model = None
 rf = None
 class_names = None
 original_fc = None
+
+# =========================
+# LOAD MODELS (RUN ONCE)
+# =========================
 
 def load_models():
     global model, rf, class_names, original_fc
@@ -111,10 +115,13 @@ def load_models():
         model.eval()
 
         original_fc = model.fc
+
         rf = joblib.load("rf.pkl")
 
         with open("classes.json") as f:
             class_names = json.load(f)
+
+        print("✅ Models loaded successfully")
 
 # =========================
 # TRANSFORM
@@ -132,7 +139,7 @@ transform = transforms.Compose([
 # =========================
 
 def predict_only(image_path):
-    load_models()
+    global model
 
     img = Image.open(image_path).convert("RGB")
     img_tensor = transform(img).unsqueeze(0).to(device)
@@ -158,10 +165,12 @@ def predict_only(image_path):
     return prediction, confidence, top2, pred_idx, img_tensor, img
 
 # =========================
-# GRADCAM ONLY
+# GRADCAM
 # =========================
 
 def generate_gradcam_only(pred_idx, img_tensor, original_img):
+
+    global model, original_fc
 
     model.fc = original_fc
 

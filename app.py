@@ -1,52 +1,32 @@
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import FileResponse
-import shutil
-import os
-
+import gradio as gr
 from inference import predict_only, generate_gradcam
 
-app = FastAPI()
 
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+def predict_fn(image_path):
+    try:
+        # Prediction
+        prediction, confidence, pred_idx, img_tensor, img = predict_only(image_path)
 
-@app.get("/")
-def home():
-    return {"message": "API running"}
+        # GradCAM (separate step)
+        gradcam_path = generate_gradcam(pred_idx, img_tensor, img)
 
-# =========================
-# PREDICT
-# =========================
+        return prediction, round(confidence, 4), gradcam_path
 
-@app.post("/predict")
-async def predict_api(file: UploadFile = File(...)):
+    except Exception as e:
+        return f"Error: {str(e)}", 0, None
 
-    path = os.path.join(UPLOAD_FOLDER, file.filename)
 
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+demo = gr.Interface(
+    fn=predict_fn,
+    inputs=gr.Image(type="filepath"),
+    outputs=[
+        gr.Text(label="Prediction"),
+        gr.Number(label="Confidence"),
+        gr.Image(label="Grad-CAM")
+    ],
+    title="Retinal OCT Classification (EfficientNet + CBAM)",
+    description="Upload an OCT image to get prediction + GradCAM visualization"
+)
 
-    prediction, confidence, pred_idx, img_tensor, img = predict_only(path)
-
-    return {
-        "prediction": prediction,
-        "confidence": round(confidence, 4)
-    }
-
-# =========================
-# GRADCAM
-# =========================
-
-@app.post("/gradcam")
-async def gradcam_api(file: UploadFile = File(...)):
-
-    path = os.path.join(UPLOAD_FOLDER, file.filename)
-
-    with open(path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    prediction, confidence, pred_idx, img_tensor, img = predict_only(path)
-
-    cam_path = generate_gradcam(pred_idx, img_tensor, img)
-
-    return FileResponse(cam_path)
+if __name__ == "__main__":
+    demo.launch()

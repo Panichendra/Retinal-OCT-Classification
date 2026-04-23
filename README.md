@@ -1,12 +1,4 @@
----
-title: Retinal OCT Classification
-emoji: 🧠
-colorFrom: blue
-colorTo: purple
-sdk: gradio
-app_file: app.py
-pinned: false
----
+## check the working model at: https://huggingface.co/spaces/PaniChendra/retinal-oct-classifier
 
 # 🧠 Retinal OCT Classification System
 
